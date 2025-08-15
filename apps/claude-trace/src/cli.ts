@@ -37,6 +37,7 @@ ${colors.yellow}OPTIONS:${colors.reset}
   --no-open          Don't open generated HTML file in browser
   --log              Specify custom log file base name (without extension)
   --claude-path      Specify custom path to Claude binary
+  --replacements     Path to JSON file with find/replace patterns for request modification
   --help, -h         Show this help message
 
 ${colors.yellow}MODES:${colors.reset}
@@ -91,6 +92,9 @@ ${colors.yellow}EXAMPLES:${colors.reset}
 
   # Use custom Claude binary path
   claude-trace --claude-path /usr/local/bin/claude
+
+  # Use find-and-replace patterns from JSON file
+  claude-trace --replacements replacements.json
 
 ${colors.yellow}OUTPUT:${colors.reset}
   Logs are saved to: ${colors.green}.claude-trace/log-YYYY-MM-DD-HH-MM-SS.{jsonl,html}${colors.reset}
@@ -234,6 +238,7 @@ async function runClaudeWithInterception(
 	openInBrowser: boolean = false,
 	customClaudePath?: string,
 	logBaseName?: string,
+	replacementsFile?: string,
 ): Promise<void> {
 	log("Claude Trace", "blue");
 	log("Starting Claude with traffic logging", "yellow");
@@ -258,6 +263,7 @@ async function runClaudeWithInterception(
 			CLAUDE_TRACE_INCLUDE_ALL_REQUESTS: includeAllRequests ? "true" : "false",
 			CLAUDE_TRACE_OPEN_BROWSER: openInBrowser ? "true" : "false",
 			...(logBaseName ? { CLAUDE_TRACE_LOG_NAME: logBaseName } : {}),
+			...(replacementsFile ? { CLAUDE_TRACE_REPLACEMENTS_FILE: replacementsFile } : {}),
 		},
 		stdio: "inherit",
 		cwd: process.cwd(),
@@ -487,6 +493,17 @@ async function main(): Promise<void> {
 		logBaseName = claudeTraceArgs[logIndex + 1];
 	}
 
+	// Check for replacements file
+	let replacementsFile: string | undefined;
+	const replacementsIndex = claudeTraceArgs.indexOf("--replacements");
+	if (replacementsIndex !== -1 && claudeTraceArgs[replacementsIndex + 1]) {
+		replacementsFile = path.resolve(claudeTraceArgs[replacementsIndex + 1]);
+		if (!fs.existsSync(replacementsFile)) {
+			log(`Replacements file not found: ${replacementsFile}`, "red");
+			process.exit(1);
+		}
+	}
+
 	// Scenario 2: --extract-token
 	if (claudeTraceArgs.includes("--extract-token")) {
 		await extractToken(customClaudePath);
@@ -525,7 +542,14 @@ async function main(): Promise<void> {
 	}
 
 	// Scenario 1: No args (or claude with args) -> launch claude with interception
-	await runClaudeWithInterception(claudeArgs, includeAllRequests, openInBrowser, customClaudePath, logBaseName);
+	await runClaudeWithInterception(
+		claudeArgs,
+		includeAllRequests,
+		openInBrowser,
+		customClaudePath,
+		logBaseName,
+		replacementsFile,
+	);
 }
 
 main().catch((error) => {

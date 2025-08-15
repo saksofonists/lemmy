@@ -102,6 +102,18 @@ export interface BedrockInvocationMetrics {
 	cacheWriteInputTokenCount?: number;
 }
 
+// Replacement configuration types
+export interface Replacement {
+	where: "system-prompt" | "user-message" | "assistant-message" | "all-messages" | "tool-description";
+	find: string; // Search pattern (literal string by default, regex if regex=true)
+	replace: string; // Replacement string
+	regex?: boolean; // If true, treat 'find' as regex pattern (default: false)
+}
+
+export interface ReplacementsConfig {
+	replacements: Replacement[];
+}
+
 declare global {
 	interface Window {
 		claudeData: ClaudeData;

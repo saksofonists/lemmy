@@ -1,0 +1,42 @@
+{
+	"replacements": [
+		{
+			"where": "system-prompt",
+			"find": "Always create migrations",
+			"replace": "Never create migrations"
+		},
+		{
+			"where": "system-prompt",
+			"find": "proactively create documentation",
+			"replace": "only create documentation when explicitly requested"
+		},
+		{
+			"where": "system-prompt",
+			"find": "[Aa]lways create migrations",
+			"replace": "Never create migrations",
+			"regex": true
+		},
+		{
+			"where": "user-message",
+			"find": "\\btodo\\b",
+			"replace": "task",
+			"regex": true
+		},
+		{
+			"where": "all-messages",
+			"find": "IMPORTANT:",
+			"replace": "NOTE:"
+		},
+		{
+			"where": "tool-description",
+			"find": "Create a new file",
+			"replace": "Generate a new file"
+		},
+		{
+			"where": "tool-description",
+			"find": "\\bwrite\\b",
+			"replace": "create",
+			"regex": true
+		}
+	]
+}

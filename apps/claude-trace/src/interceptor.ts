@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
-import { RawPair } from "./types";
+import { RawPair, ReplacementsConfig, Replacement } from "./types";
 import { HTMLGenerator } from "./html-generator";
 
 export interface InterceptorConfig {
@@ -19,6 +19,7 @@ export class ClaudeTrafficLogger {
 	private pairs: RawPair[] = [];
 	private config: InterceptorConfig;
 	private htmlGenerator: HTMLGenerator;
+	private replacements: Replacement[] = [];
 
 	constructor(config: InterceptorConfig = {}) {
 		this.config = {
@@ -44,6 +45,9 @@ export class ClaudeTrafficLogger {
 
 		// Initialize HTML generator
 		this.htmlGenerator = new HTMLGenerator();
+
+		// Load replacements if specified
+		this.loadReplacements();
 
 		// Clear log file
 		fs.writeFileSync(this.logFile, "");
@@ -114,6 +118,133 @@ export class ClaudeTrafficLogger {
 	private async cloneResponse(response: Response): Promise<Response> {
 		// Clone the response to avoid consuming the body
 		return response.clone();
+	}
+
+	private loadReplacements(): void {
+		const replacementsFile = process.env.CLAUDE_TRACE_REPLACEMENTS_FILE;
+		if (!replacementsFile) return;
+
+		try {
+			const content = fs.readFileSync(replacementsFile, "utf-8");
+			const config: ReplacementsConfig = JSON.parse(content);
+			this.replacements = config.replacements || [];
+			console.log(`Loaded ${this.replacements.length} replacement patterns from ${replacementsFile}`);
+		} catch (error) {
+			console.error(`Failed to load replacements file: ${error}`);
+		}
+	}
+
+	private escapeRegExp(string: string): string {
+		// Escape special regex characters for literal string matching
+		return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	}
+
+	private applyToMessageContent(content: any, regex: RegExp, replace: string): any {
+		// Handle both string format and array of content blocks
+		if (typeof content === "string") {
+			// Simple string content (older API format)
+			return content.replace(regex, replace);
+		} else if (Array.isArray(content)) {
+			// Array of content blocks (current API format)
+			for (const item of content) {
+				if (item.type === "text" && item.text) {
+					item.text = item.text.replace(regex, replace);
+				}
+			}
+			return content;
+		}
+		return content;
+	}
+
+	private applyReplacements(body: any): any {
+		if (!body || this.replacements.length === 0) return body;
+
+		// Deep clone the body to avoid modifying the original
+		const modifiedBody = JSON.parse(JSON.stringify(body));
+
+		for (const replacement of this.replacements) {
+			// Create regex based on the regex flag
+			const pattern = replacement.regex ? replacement.find : this.escapeRegExp(replacement.find);
+			const regex = new RegExp(pattern, "g");
+
+			switch (replacement.where) {
+				case "system-prompt":
+					// Handle both string and array formats for system prompt
+					if (typeof modifiedBody.system === "string") {
+						modifiedBody.system = modifiedBody.system.replace(regex, replacement.replace);
+					} else if (Array.isArray(modifiedBody.system)) {
+						for (const item of modifiedBody.system) {
+							if (item.type === "text" && item.text) {
+								item.text = item.text.replace(regex, replacement.replace);
+							}
+						}
+					}
+					break;
+
+				case "user-message":
+					if (modifiedBody.messages && Array.isArray(modifiedBody.messages)) {
+						for (const message of modifiedBody.messages) {
+							if (message.role === "user") {
+								message.content = this.applyToMessageContent(message.content, regex, replacement.replace);
+							}
+						}
+					}
+					break;
+
+				case "assistant-message":
+					if (modifiedBody.messages && Array.isArray(modifiedBody.messages)) {
+						for (const message of modifiedBody.messages) {
+							if (message.role === "assistant") {
+								message.content = this.applyToMessageContent(message.content, regex, replacement.replace);
+							}
+						}
+					}
+					break;
+
+				case "all-messages":
+					// Apply to system prompt
+					if (typeof modifiedBody.system === "string") {
+						modifiedBody.system = modifiedBody.system.replace(regex, replacement.replace);
+					} else if (Array.isArray(modifiedBody.system)) {
+						for (const item of modifiedBody.system) {
+							if (item.type === "text" && item.text) {
+								item.text = item.text.replace(regex, replacement.replace);
+							}
+						}
+					}
+					// Apply to all messages
+					if (modifiedBody.messages && Array.isArray(modifiedBody.messages)) {
+						for (const message of modifiedBody.messages) {
+							message.content = this.applyToMessageContent(message.content, regex, replacement.replace);
+						}
+					}
+					break;
+
+				case "tool-description":
+					// Apply to tool descriptions
+					if (modifiedBody.tools && Array.isArray(modifiedBody.tools)) {
+						for (const tool of modifiedBody.tools) {
+							if (tool.description && typeof tool.description === "string") {
+								tool.description = tool.description.replace(regex, replacement.replace);
+							}
+							// Also check for nested input_schema description
+							if (
+								tool.input_schema &&
+								tool.input_schema.description &&
+								typeof tool.input_schema.description === "string"
+							) {
+								tool.input_schema.description = tool.input_schema.description.replace(
+									regex,
+									replacement.replace,
+								);
+							}
+						}
+					}
+					break;
+			}
+		}
+
+		return modifiedBody;
 	}
 
 	private async parseRequestBody(body: any): Promise<any> {
@@ -193,14 +324,25 @@ export class ClaudeTrafficLogger {
 			const requestId = logger.generateRequestId();
 			const requestTimestamp = Date.now();
 
-			// Capture request details
+			// Parse the request body
+			let parsedBody = await logger.parseRequestBody(init.body);
+
+			// Apply replacements to the parsed body
+			const modifiedBody = logger.applyReplacements(parsedBody);
+
+			// Capture request details (for logging)
 			const requestData = {
 				timestamp: requestTimestamp / 1000, // Convert to seconds (like Python version)
 				method: init.method || "GET",
 				url: url,
 				headers: logger.redactSensitiveHeaders(Object.fromEntries(new Headers(init.headers || {}).entries())),
-				body: await logger.parseRequestBody(init.body),
+				body: modifiedBody, // Log the modified body
 			};
+
+			// Update init.body with the modified body for the actual request
+			if (modifiedBody !== parsedBody && modifiedBody) {
+				init.body = JSON.stringify(modifiedBody);
+			}
 
 			// Store pending request
 			logger.pendingRequests.set(requestId, requestData);

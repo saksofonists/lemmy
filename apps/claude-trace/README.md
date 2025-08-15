@@ -34,6 +34,9 @@ claude-trace --generate-html logs.jsonl --include-all-requests
 
 # Generate conversation summaries and searchable index
 claude-trace --index
+
+# Use find-and-replace patterns to modify requests
+claude-trace --replacements replacements.json
 ```
 
 Logs are saved to `.claude-trace/log-YYYY-MM-DD-HH-MM-SS.{jsonl,html}` in your current directory. The HTML file is self-contained and opens in any browser without needing a server.
@@ -46,6 +49,76 @@ By default, claude-trace filters logs to focus on substantial conversations:
 - **With `--include-all-requests`**: Logs all requests made to `api.anthropic.com` including single-message requests and other endpoints
 
 This filtering reduces log file size and focuses on meaningful development sessions, while still allowing you to capture everything when needed for debugging.
+
+## Request Modification
+
+You can modify requests before they reach the Anthropic API using find-and-replace patterns:
+
+```bash
+claude-trace --replacements replacements.json
+```
+
+Create a JSON file with replacement patterns:
+
+```json
+{
+	"replacements": [
+		{
+			"where": "system-prompt",
+			"find": "Always create migrations",
+			"replace": "Never create migrations"
+		},
+		{
+			"where": "user-message",
+			"find": "todo",
+			"replace": "task"
+		},
+		{
+			"where": "system-prompt",
+			"find": "[Aa]lways create migrations",
+			"replace": "Never create migrations",
+			"regex": true
+		},
+		{
+			"where": "user-message",
+			"find": "\\btodo\\b",
+			"replace": "task",
+			"regex": true
+		},
+		{
+			"where": "all-messages",
+			"find": "IMPORTANT:",
+			"replace": "NOTE:"
+		},
+		{
+			"where": "tool-description",
+			"find": "Create a new file",
+			"replace": "Generate a new file"
+		}
+	]
+}
+```
+
+Options:
+
+- `where`: Target for replacements
+   - `system-prompt` - Apply to system prompts only
+   - `user-message` - Apply to user messages only
+   - `assistant-message` - Apply to assistant messages only
+   - `all-messages` - Apply to all content (system + all messages)
+   - `tool-description` - Apply to tool descriptions and input schema descriptions
+- `find`: Search pattern (literal string by default)
+- `replace`: Replacement string
+- `regex`: Optional boolean (default: `false`)
+   - When `false`: `find` is treated as literal string (special characters are escaped)
+   - When `true`: `find` is treated as regular expression pattern
+
+This feature is useful for:
+
+- Overriding Claude Code's default behaviors
+- Testing different prompting strategies
+- Debugging specific scenarios
+- Customizing Claude's responses without modifying source code
 
 ## Conversation Indexing
 
